@@ -1,66 +1,52 @@
 import * as fs from 'fs';
 
-interface FeeSchedule {
-  [cptCode: string]: number;
+interface ProcedureInput {
+  code: string;
+  hospitalCharge: number;
 }
 
-interface ChargeResult {
-  cptCode: string;
+interface BreakdownItem {
+  code: string;
   hospitalCharge: number;
-  allowedFee: number;
-  overcharge: number;
-  savings: number;
+  medicareFee: number | null;
+  savings: number | null;
 }
 
 interface CheckChargesResult {
-  results: ChargeResult[];
+  breakdown: BreakdownItem[];
   totalSavings: number;
 }
 
-function parseCSV(content: string): { [key: string]: string }[] {
-  const lines = content.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim());
-  return lines.slice(1).map(line => {
-    const values = line.split(',').map(v => v.trim());
-    const obj: { [key: string]: string } = {};
-    headers.forEach((h, i) => {
-      obj[h] = values[i] || '';
-    });
-    return obj;
-  });
-}
-
-export function checkCharges(userCsvPath: string, feeSchedulePath: string): CheckChargesResult {
+export function checkCharges(procedures: ProcedureInput[]): CheckChargesResult {
   // Read and parse fee schedule JSON
-  const feeScheduleContent = fs.readFileSync(feeSchedulePath, 'utf-8');
-  const feeSchedule: FeeSchedule = JSON.parse(feeScheduleContent);
+  const feeData: any[] = JSON.parse(fs.readFileSync('data/feeSchedule.json', 'utf-8'));
 
-  // Read and parse user CSV
-  const csvContent = fs.readFileSync(userCsvPath, 'utf-8');
-  const csvRows = parseCSV(csvContent);
+  // Create a map for efficient lookup of active codes
+  const feeMap = new Map<string, number>();
+  for (const item of feeData) {
+    if (item.status === 'A') {
+      feeMap.set(item.code, item.nonFacilityFee);
+    }
+  }
 
-  const results: ChargeResult[] = [];
+  const breakdown: BreakdownItem[] = [];
   let totalSavings = 0;
 
-  for (const row of csvRows) {
-    const cptCode = row['CPT Code'] || row['cpt'] || row['code'] || ''; // flexible column name
-    const hospitalChargeStr = row['Hospital Charge'] || row['charge'] || '';
-    const hospitalCharge = parseFloat(hospitalChargeStr) || 0;
+  for (const proc of procedures) {
+    const medicareFee = feeMap.get(proc.code) || null;
+    const savings = medicareFee !== null ? proc.hospitalCharge - medicareFee : null;
 
-    const allowedFee = feeSchedule[cptCode] || 0;
-    const overcharge = Math.max(0, hospitalCharge - allowedFee);
-    const savings = overcharge;
-
-    results.push({
-      cptCode,
-      hospitalCharge,
-      allowedFee,
-      overcharge,
+    breakdown.push({
+      code: proc.code,
+      hospitalCharge: proc.hospitalCharge,
+      medicareFee,
       savings
     });
 
-    totalSavings += overcharge;
+    if (savings !== null) {
+      totalSavings += savings;
+    }
   }
 
-  return { results, totalSavings };
+  return { breakdown, totalSavings };
 }
